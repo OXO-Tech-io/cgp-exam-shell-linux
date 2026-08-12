@@ -9,7 +9,7 @@ class WorkspaceLock:
 
     def _gsettings_get(self, schema: str, key: str) -> str:
         result = subprocess.run(
-            ["gsettings" "get" , schema, key],
+            ["gsettings", "get", schema, key],
             capture_output=True, text=True
         )
         return result.stdout.strip()

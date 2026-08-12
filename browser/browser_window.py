@@ -1,12 +1,16 @@
 import subprocess
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog,
+    QWidget, QVBoxLayout, QPushButton, QDialog,
     QLabel, QTextEdit, QMessageBox
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
 from PySide6.QtCore import QUrl, Qt
-from lockdown.key_grabber import KeyGrabber
+
+from lockdown.hotkey_blocker import HotkeyBlocker
+from lockdown.focus_monitor import FocusMonitor
+from browser.violation_overlay import ViolationOverlay
+
 
 class ExitReasonDialog(QDialog):
     def __init__(self, parent=None):
@@ -35,18 +39,13 @@ class ExitReasonDialog(QDialog):
 
 
 class ExamShellWindow(QWidget):
+    MAX_VIOLATIONS = 3
+
     def __init__(self, exam_url: str):
         super().__init__()
 
         self.violation_count = 0
-        
-        # 1. Turn on GNOME workspace and system lockdowns
-        self.set_gnome_lockdown(True)
-        
-        # 2. Start capturing global system hotkeys via X11
-        self.key_grabber = KeyGrabber()
-        self.key_grabber.violation.connect(self.handle_violation)
-        self.key_grabber.start()
+        self._allow_close = False
 
         self.profile = QWebEngineProfile()
         self.profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
@@ -62,13 +61,8 @@ class ExamShellWindow(QWidget):
         self.exit_btn = QPushButton("Exit Exam", self)
         self.exit_btn.setStyleSheet("""
             QPushButton {
-                background-color: #d32f2f;
-                color: white;
-                font-weight: bold;
-                padding: 8px 16px;
-                border-radius: 4px;
-                border: none;
-                outline: none;
+                background-color: #d32f2f; color: white; font-weight: bold;
+                padding: 8px 16px; border-radius: 4px; border: none; outline: none;
             }
             QPushButton:hover { background-color: #b71c1c; }
             QPushButton:focus { border: none; outline: none; }
@@ -78,26 +72,18 @@ class ExamShellWindow(QWidget):
         self.exit_btn.clicked.connect(self.handle_exit_request)
         self.exit_btn.move(12, 12)
         self.exit_btn.raise_()
-        
-        self._allow_close = False
 
-    def set_gnome_lockdown(self, disable: bool):
-        """Disables or restores Ubuntu desktop gestures and workspace switching."""
-        # When browser asks to 'disable' system options, we change bindings to empty strings
-        left_bind = "['']" if disable else "['<Super>Page_Up', '<Control><Alt>Left', '<Super><Shift>Page_Up']"
-        right_bind = "['']" if disable else "['<Super>Page_Up', '<Control><Alt>Right', '<Super><Shift>Page_Down']"
-        lockdown_value = "true" if disable else "false"
-        
-        try:
-            # Clear or restore workspace movement keys
-            subprocess.run(["gsettings", "set", "org.gnome.desktop.wm.keybindings", "switch-to-workspace-left", left_bind], check=False)
-            subprocess.run(["gsettings", "set", "org.gnome.desktop.wm.keybindings", "switch-to-workspace-right", right_bind], check=False)
-            
-            # Disable command line access (Alt+F2 runner and terminal access restrictions)
-            subprocess.run(["gsettings", "set", "org.gnome.desktop.lockdown", "disable-command-line", lockdown_value], check=False)
-            subprocess.run(["gsettings", "set", "org.gnome.desktop.lockdown", "disable-printing", lockdown_value], check=False)
-        except Exception as e:
-            print(f"Failed to modify gsettings parameters: {e}")
+        self.overlay = ViolationOverlay(self, on_countdown_done=self._reseize_focus)
+
+        self.hotkey_blocker = HotkeyBlocker()
+        self.hotkey_blocker.violation.connect(
+            lambda combo: self.register_violation(f"Blocked key combo: {combo}")
+        )
+        self.hotkey_blocker.start()
+
+        self.focus_monitor = FocusMonitor(self)
+        self.focus_monitor.focus_lost.connect(self.register_violation)
+        self.focus_monitor.start()
 
     def resizeEvent(self, event):
         self.webview.setGeometry(0, 0, self.width(), self.height())
@@ -105,28 +91,40 @@ class ExamShellWindow(QWidget):
         self.exit_btn.raise_()
         super().resizeEvent(event)
 
+    def register_violation(self, message: str):
+        self.violation_count += 1
+        print(f"[VIOLATION #{self.violation_count}] {message}")
+
+        if self.violation_count >= self.MAX_VIOLATIONS:
+            self._force_exit_due_to_violations()
+            return
+
+        self.overlay.show_violation(message, self.violation_count)
+
+    def _reseize_focus(self):
+        self.showFullScreen()
+        self.activateWindow()
+        self.raise_()
+
+    def _force_exit_due_to_violations(self):
+        print(f"[EXAM TERMINATED] Reached {self.MAX_VIOLATIONS} violations.")
+        self.hotkey_blocker.stop()
+        self.focus_monitor.stop()
+        self._allow_close = True
+        QMessageBox.critical(
+            self, "Exam Terminated",
+            f"Your exam session has been ended after {self.MAX_VIOLATIONS} violations."
+        )
+        self.close()
+
     def handle_exit_request(self):
         dialog = ExitReasonDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             print(f"[EXIT REASON] {dialog.reason}")
-            
-            # Undo restrictions before exiting
-            self.key_grabber.stop()
-            self.set_gnome_lockdown(False)
-            
+            self.hotkey_blocker.stop()
+            self.focus_monitor.stop()
             self._allow_close = True
             self.close()
-
-    def handle_violation(self, combo: str):
-        self.violation_count += 1
-        print(f"[VIOLATION #{self.violation_count}] Blocked combo attempted: {combo}")
-        QMessageBox.warning(
-            self,
-            "Exam Violation Detected",
-            f"Attempted restricted action: {combo}\n\n"
-            f"This has been logged as violation #{self.violation_count}.\n"
-            f"Repeated violations may end your exam session."
-        )
 
     def closeEvent(self, event):
         if self._allow_close:

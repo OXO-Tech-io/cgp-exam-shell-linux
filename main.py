@@ -14,6 +14,7 @@ def main():
     app = QApplication(sys.argv)
     window = ExamShellWindow(EXAM_URL)
     window.showFullScreen()
+    window.focus_monitor.start()
     sys.exit(app.exec())
 
 if __name__ == "__main__":
