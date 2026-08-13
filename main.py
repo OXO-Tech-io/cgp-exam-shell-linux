@@ -5,14 +5,30 @@ import sys
 os.environ["QT_QPA_PLATFORM"] = "xcb"
 os.environ["GDK_BACKEND"] = "x11"
 
+# TEMPORARY DEBUG -- lets us inspect the live exam page (console/network/DOM) from a
+# normal browser while it's loaded inside this shell. Remove once the assignment_id
+# routing issue is diagnosed. Must be set before QtWebEngine initializes.
+os.environ["QTWEBENGINE_REMOTE_DEBUGGING"] = "9223"
+
 from PySide6.QtWidgets import QApplication
 from browser.browser_window import ExamShellWindow
+from browser.launch_uri import find_launch_uri, build_exam_url
+from browser import session_log
+from config.settings import validate_exam_url
 
 EXAM_URL = "https://cgp-assessment-frontend-app-297614602590.us-central1.run.app/"
 
 def main():
     app = QApplication(sys.argv)
-    window = ExamShellWindow(EXAM_URL)
+
+    # If the OS activated us via a cgpshell://start?access_token=...&... link (fired by
+    # ExamEntryPage.js's handleBeginAssessment when the candidate is already logged in),
+    # forward the SSO tokens onto the exam URL so the candidate skips the in-shell login.
+    launch_uri = find_launch_uri(sys.argv[1:])
+    target_url = validate_exam_url(build_exam_url(EXAM_URL, launch_uri))
+    session_log.log_event(f"argv={sys.argv[1:]!r} launch_uri={launch_uri!r} target_url={target_url!r}")
+
+    window = ExamShellWindow(target_url)
     window.showFullScreen()
     window.focus_monitor.start()
     sys.exit(app.exec())

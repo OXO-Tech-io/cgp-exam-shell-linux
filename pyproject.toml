@@ -10,3 +10,8 @@ dependencies = [
     "pyside6-addons>=6.11.1",
     "python-xlib>=0.33",
 ]
+
+[dependency-groups]
+# Build-time only -- freezes the app into installer/.build so the .deb ships a
+# self-contained binary. Never installed on a candidate's machine.
+dev = ["pyinstaller>=6.10"]
