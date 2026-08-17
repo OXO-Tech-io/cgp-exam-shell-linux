@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=CGP Exam Shell
+Comment=Lockdown shell for CGP assessments
+Exec=cgp-exam-shell %u
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+MimeType=x-scheme-handler/cgpshell;
+Categories=Education;
