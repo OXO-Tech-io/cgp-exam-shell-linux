@@ -4,12 +4,22 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-if getattr(sys, "frozen", False):
-    # PyInstaller extracts --add-data "config/exam_config.json:config" here; __file__
-    # inside a frozen build doesn't map to a real path on disk the way it does in dev.
-    _CONFIG_PATH = Path(sys._MEIPASS) / "config" / "exam_config.json"
-else:
-    _CONFIG_PATH = Path(__file__).resolve().parent / "exam_config.json"
+
+def _resolve_config_path() -> Path:
+    """
+    Returns the path to exam_config.json.
+
+    PyInstaller extracts --add-data "config/exam_config.json:config" into
+    sys._MEIPASS at runtime; __file__ inside a frozen build doesn't map to
+    a real path on disk the way it does in dev, so the two cases need
+    different resolution logic.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "config" / "exam_config.json"
+    return Path(__file__).resolve().parent / "exam_config.json"
+
+
+_CONFIG_PATH = _resolve_config_path()
 
 
 def _load_config() -> dict:
@@ -25,10 +35,6 @@ _config = _load_config()
 # Override with CGP_BACKEND_BASE_URL for staging/QA without touching the installed config file.
 BASE_URL = os.environ.get("CGP_BACKEND_BASE_URL", _config.get("base_url", "")).rstrip("/")
 
-# Hardcoded allowlist -- same role as ConfigValidator.cs on the Windows shell: even if
-# exam_config.json is tampered with, or a cgpshell:// launch URI carries an unexpected
-# query string, the shell will refuse to load anything outside these hosts, so the SSO
-# token handoff can't be redirected to an attacker-controlled page.
 ALLOWED_EXAM_HOSTS = {
     "cgp-assessment-frontend-app-297614602590.us-central1.run.app",
 }

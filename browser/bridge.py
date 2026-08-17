@@ -16,13 +16,17 @@ class WebBridge(QObject):
     message_received = Signal(dict)
 
     @Slot(str)
-    def postMessage(self, raw: str):
+    def postMessage(self, raw: str) -> None:
         session_log.log(f"RAW: {raw}")
 
         try:
             payload = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             print(f"[BRIDGE] dropped malformed message: {raw!r}")
+            return
+
+        if not isinstance(payload, dict):
+            print(f"[BRIDGE] dropped non-object JSON message: {raw!r}")
             return
 
         event = payload.get("event")

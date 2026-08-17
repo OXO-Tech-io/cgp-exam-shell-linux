@@ -4,10 +4,8 @@ LAUNCH_URI_SCHEME = "cgpshell"
 
 
 def find_launch_uri(argv: list[str]) -> str | None:
-    for arg in argv:
-        if arg.startswith(f"{LAUNCH_URI_SCHEME}://"):
-            return arg
-    return None
+    return next((arg for arg in argv if 
+                 arg.startswith(f"{LAUNCH_URI_SCHEME}://")),None)
 
 
 def build_exam_url(exam_url: str, launch_uri: str | None) -> str:

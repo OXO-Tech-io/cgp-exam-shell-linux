@@ -26,6 +26,8 @@ _UNCONFIRMED_HOTKEY_EVENT_TYPES = {
 }
 HOTKEY_EVENT_TYPES.update(_UNCONFIRMED_HOTKEY_EVENT_TYPES)
 
+_SHUTDOWN_SENTINEL = object()
+
 
 class SessionError(Exception):
     """Raised when the backend rejects session creation or a network error occurs."""
@@ -40,7 +42,7 @@ class SessionManager:
     from multiple threads (pynput's hotkey listener thread, the Qt focus-poll timer).
     """
 
-    def __init__(self, base_url: str = BASE_URL):
+    def __init__(self, base_url: str = BASE_URL) -> None:
         self._base_url = base_url.rstrip("/")
         self._student_id = None
         self._session_token = None
@@ -53,7 +55,7 @@ class SessionManager:
         self._worker.start()
 
     @property
-    def session_token(self):
+    def session_token(self) -> str | None:
         return self._session_token
 
     @property
@@ -99,7 +101,7 @@ class SessionManager:
 
     # ---- security events (queued, seq_no assigned in strict send order) ----
 
-    def queue_security_event(self, event_type: str, description: str):
+    def queue_security_event(self, event_type: str, description: str) -> None:
         occurred_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         self._queue.put({
             "eventType": event_type,
@@ -107,9 +109,20 @@ class SessionManager:
             "occurred_at": occurred_at,
         })
 
-    def _process_queue(self):
+    def shutdown(self) -> None:
+        """Signal the worker thread to finish its current item,
+        drop out of the lopp, and stop -- call this before the app closes so queued
+        security events aren't silently dropped by an abrupt process exit."""
+        self._queue.put(_SHUTDOWN_SENTINEL)
+        self._worker.join(timeout=5.0)
+
+    def _process_queue(self) -> None:
         while True:
             item = self._queue.get()
+
+            if item is _SHUTDOWN_SENTINEL:
+                break
+            
             self._session_ready.wait()
 
             seq_no = self._next_seq_no
@@ -141,7 +154,7 @@ class SessionManager:
 
     # ---- transport -------------------------------------------------------------
 
-    def _post_json(self, path: str, body: dict, timeout: float = 10.0):
+    def _post_json(self, path: str, body: dict, timeout: float = 10.0) -> tuple[int, dict]:
         url = f"{self._base_url}{path}"
         endpoint = path.lstrip("/")
         session_log.log_event(f"POST {endpoint} request={json.dumps(body)}")

@@ -1,17 +1,7 @@
-"""
-Main exam browser window.
-
-QWebEngineView is Chromium-based (same engine family as WebView2 on
-Windows), so cookie/profile behavior stays close to what you already
-solved there. Fullscreen + close/minimize suppression happens here;
-deeper OS-level lockdown (hotkeys, focus monitoring) lives in the
-lockdown/ package and is wired in here.
-"""
-
 import threading
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QPushButton, QDialog,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog,
     QLabel, QTextEdit, QMessageBox
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -26,6 +16,8 @@ from browser import session_log
 from browser.bridge import WebBridge, make_bridge_script, BRIDGE_JS_OBJECT_NAME
 from browser.token_bootstrap import make_token_bootstrap_script
 from browser.session_manager import SessionManager, SessionError, HOTKEY_EVENT_TYPES
+from browser.theme import DIALOG_STYLE, EXIT_BUTTON_STYLE, CRITICAL_DIALOG_STYLE
+from lockdown.display_monitor import DisplayMonitor
 
 
 class ExitReasonDialog(QDialog):
@@ -33,25 +25,90 @@ class ExitReasonDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("End Exam Session")
         self.setModal(True)
+        self.setFixedWidth(440)
+        self.setStyleSheet(DIALOG_STYLE)
         self.reason = None
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Please state your reason for ending the exam:"))
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(14)
+
+        title = QLabel("End your exam session?")
+        title.setObjectName("dialogTitle")
+        layout.addWidget(title)
+
+        subtitle = QLabel("Please tell us why you're ending the exam. This will be recorded.")
+        subtitle.setObjectName("dialogSubtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
 
         self.text_edit = QTextEdit()
+        self.text_edit.setPlaceholderText("e.g. Technical issue, feeling unwell, submitted early…")
+        self.text_edit.setFixedHeight(100)
         layout.addWidget(self.text_edit)
 
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("secondaryBtn")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
         confirm_btn = QPushButton("Confirm Exit")
+        confirm_btn.setObjectName("primaryBtn")
+        confirm_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         confirm_btn.clicked.connect(self._confirm)
-        layout.addWidget(confirm_btn)
+        btn_row.addWidget(confirm_btn)
+
+        layout.addLayout(btn_row)
 
     def _confirm(self):
         text = self.text_edit.toPlainText().strip()
         if not text:
-            QMessageBox.warning(self, "Required", "You must provide a reason before exiting.")
+            self.text_edit.setStyleSheet("border: 1px solid #d32f2f;")
+            self.text_edit.setPlaceholderText("A reason is required before you can exit.")
             return
         self.reason = text
         self.accept()
+        text = self.text_edit.toPlainText().strip()
+        if not text:
+            self.text_edit.setStyleSheet("border: 1px solid #d32f2f;")
+            self.text_edit.setPlaceholderText("A reason is required before you can exit.")
+            return
+        self.reason = text
+        self.accept()
+
+class ExamTerminatedDialog(QDialog):
+    def __init__(self, parent, violation_count: int):
+        super().__init__(parent)
+        self.setWindowTitle("Exam Terminated")
+        self.setModal(True)
+        self.setFixedWidth(420)
+        self.setStyleSheet(CRITICAL_DIALOG_STYLE)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(14)
+
+        title = QLabel("⚠ Exam Session Terminated")
+        title.setObjectName("criticalTitle")
+        layout.addWidget(title)
+
+        body = QLabel(
+            f"Your exam has ended after {violation_count} recorded violations. "
+            f"This has been logged and reported."
+        )
+        body.setObjectName("criticalBody")
+        body.setWordWrap(True)
+        layout.addWidget(body)
+
+        ack_btn = QPushButton("I Understand")
+        ack_btn.setObjectName("ackBtn")
+        ack_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        ack_btn.clicked.connect(self.accept)
+        layout.addWidget(ack_btn)
 
 
 class ExamShellWindow(QWidget):
@@ -105,15 +162,8 @@ class ExamShellWindow(QWidget):
 
         # ---- Exit button --------------------------------------------------
         self.exit_btn = QPushButton("Exit Exam", self)
-        self.exit_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #d32f2f; color: white; font-weight: bold;
-                padding: 8px 16px; border-radius: 4px; border: none; outline: none;
-            }
-            QPushButton:hover { background-color: #b71c1c; }
-            QPushButton:focus { border: none; outline: none; }
-            QPushButton:pressed { background-color: #a31515; border: none; }
-        """)
+        self.exit_btn.setStyleSheet(EXIT_BUTTON_STYLE)
+        self.exit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.exit_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.exit_btn.clicked.connect(self.handle_exit_request)
         self.exit_btn.move(12, 12)
@@ -145,6 +195,8 @@ class ExamShellWindow(QWidget):
         self.webview.setGeometry(0, 0, self.width(), self.height())
         self.exit_btn.move(12, 12)
         self.exit_btn.raise_()
+        if self.overlay.isVisible():
+            self.overlay.setGeometry(0, 0, self.width(), self.height())
         super().resizeEvent(event)
 
     def register_violation(self, message: str):
@@ -170,10 +222,10 @@ class ExamShellWindow(QWidget):
         self.hotkey_blocker.stop()
         self.focus_monitor.stop()
         self._allow_close = True
-        QMessageBox.critical(
-            self, "Exam Terminated",
-            f"Your exam session has been ended after {self.MAX_VIOLATIONS} violations."
-        )
+
+        dialog = ExamTerminatedDialog(self, self.violation_count)
+        dialog.exec()
+
         self.close()
 
     def handle_exit_request(self):
@@ -192,7 +244,7 @@ class ExamShellWindow(QWidget):
         else:
             self.focus_monitor.start()
 
-    def _on_assessment_started(self, payload: dict):
+    def _on_assessment_started(self, payload: dict) -> None:
         if self.session.session_token is not None:
             return  # duplicate assessment_started message; session already established
 
@@ -238,6 +290,25 @@ class ExamShellWindow(QWidget):
     def _show_session_error(self, message: str):
         QMessageBox.critical(self, "Backend Session Error", message)
 
+    def _on_screen_count_changed(self, count: int):
+        if count > 1:
+            print(f"[CRITICAL] Multi-monitor detected mid-exam: {count} displays connected.")
+            self._send_audit_log_async(
+                "EXAM_CANCELLED", f"Multiple displays detected mid-exam ({count} connected)."
+            )
+            self.session.queue_security_event(
+                "MULTI_MONITOR_DETECTED", f"{count} displays connected during exam."
+            )
+            self.hotkey_blocker.stop()
+            self.focus_monitor.stop()
+            self.display_monitor.stop()
+            self._allow_close = True
+
+            dialog = ExamTerminatedDialog(self, self.violation_count)
+            dialog.exec()
+
+            self.close()
+
     def _handle_permission_request(self, origin, feature):
         if feature in (
             QWebEnginePage.Feature.MediaAudioCapture,
@@ -250,6 +321,7 @@ class ExamShellWindow(QWidget):
 
     def closeEvent(self, event):
         if self._allow_close:
+            self.session.shutdown()
             event.accept()
         else:
             event.ignore()

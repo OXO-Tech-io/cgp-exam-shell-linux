@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+*main.cpython-312.pyc
 
 .venv/
 venv/
@@ -12,3 +13,9 @@ installer/*.deb
 
 # Runtime log, written to the user's state dir at import time, not shipped/authored.
 sessionLog.txt
+
+browser/__pycache__/
+*browser_window.cpython-312.pyc
+
+lockdown/__pycache__/
+*focus_monitor.cpython-312.pyc

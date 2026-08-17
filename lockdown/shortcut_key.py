@@ -14,7 +14,7 @@ class X11ShortcutBlocker(QObject):
     # so a grab fires regardless of lock-key state
     _LOCK_EXTRAS = (0, 2, 16, 18, 32, 34, 48, 50)
 
-    def __init__(self, regrab_interval_sec: float = 2.0):
+    def __init__(self, regrab_interval_sec: float = 2.0) -> None:
         super().__init__()
         self.regrab_interval_sec = regrab_interval_sec
         self.display = None
@@ -45,7 +45,7 @@ class X11ShortcutBlocker(QObject):
         self.display = display.Display()
         self.root = self.display.screen().root
 
-        def error_handler(err, request):
+        def error_handler(err, request) -> None:
             logger.debug("XGrabKey non-fatal error: %s", err)
 
         self.display.set_error_handler(error_handler)
@@ -61,7 +61,7 @@ class X11ShortcutBlocker(QObject):
 
         logger.info("X11 passive shortcut grabs active (%d combos)", len(self._blocked_codes))
 
-    def _blocked_combos(self):
+    def _blocked_combos(self) -> list[tuple[str, int]]:
         """(keysym name, modifier mask) pairs -- extend this list as new
         bypass vectors are identified. Modifier masks use Xlib's X module
         constants directly rather than hand-rolled ints, so this reads
@@ -120,7 +120,7 @@ class X11ShortcutBlocker(QObject):
             ("F11", 0),
         ]
 
-    def _grab_all(self):
+    def _grab_all(self) -> None:
         self._blocked_codes.clear()
         for key_name, mod in self._blocked_combos():
             keysym = self._XK.string_to_keysym(key_name)
@@ -137,7 +137,7 @@ class X11ShortcutBlocker(QObject):
                 self._blocked_codes.add((keycode, full_mod))
         self.display.sync()
 
-    def _release_all(self):
+    def _release_all(self) -> None:
         for keycode, full_mod in self._blocked_codes:
             try:
                 self.root.ungrab_key(keycode, full_mod, self.root)
@@ -145,7 +145,7 @@ class X11ShortcutBlocker(QObject):
                 pass
         self.display.sync()
 
-    def _event_loop(self):
+    def _event_loop(self) -> None:
         while self._running:
             try:
                 event = self.display.next_event()
@@ -154,7 +154,7 @@ class X11ShortcutBlocker(QObject):
             if event.type == self._X.KeyPress:
                 self.violation.emit(f"x11-grabbed-shortcut keycode={event.detail}")
 
-    def _regrab_loop(self):
+    def _regrab_loop(self) -> None:
         """Grabs can be silently dropped by a WM restart or certain focus
         transitions -- periodically re-asserting them is cheap insurance."""
         import time
@@ -167,7 +167,7 @@ class X11ShortcutBlocker(QObject):
             except Exception as e:
                 logger.debug("Re-grab pass failed: %s", e)
 
-    def stop(self):
+    def stop(self) -> None:
         self._running = False
         if self.display:
             self._release_all()
